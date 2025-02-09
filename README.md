@@ -31,18 +31,12 @@ A powerful AI-powered chat interface for Houdini that helps users generate and e
 ```bash
 git clone https://github.com/waveWhirlVfx/Houdini-ChatBot.git
 ```
-
-2. Install required Python packages:
-```bash
-pip install PySide2 requests
-```
-
-3. For voice features (optional):
+2. For voice features (optional):
 ```bash
 pip install SpeechRecognition pyttsx3
 ```
 
-4. Ensure Ollama is installed and running on your system:
+3. Ensure Ollama is installed and running on your system:
    - The tool automatically checks for Ollama installation
    - Default API endpoint is `http://localhost:11434/api/generate`
 
