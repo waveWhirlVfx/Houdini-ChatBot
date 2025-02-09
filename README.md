@@ -53,7 +53,8 @@ pip install SpeechRecognition pyttsx3
 2. Create a new Python Panel and add this code:
 ```python
 import HoudiniChatBot
-return HoudiniChatBot.createInterface()
+def onCreateInterface():
+    return HoudiniChatBot.createInterface()
 ```
 
 3. The chat interface will appear with the following features:
