@@ -1,3 +1,16 @@
+"""
+Houdini Chatbot
+Author: Anshul Vashist
+Role: FX TD | Python & Automation Enthusiast
+GitHub: [https://github.com/waveWhirlVfx]
+LinkedIn: [https://www.linkedin.com/in/av-0001/]
+Email: [vashistanshul.7@gmail.com]
+Youtube: https://www.youtube.com/@waveWhirlVfx
+Description:
+    This Houdini Python Panel integrates AI assistance for generating Houdini Python & VEX code,
+    automating workflows, and improving efficiency.
+"""
+
 import hou
 from PySide2 import QtWidgets, QtCore, QtGui, QtSvg
 import requests
