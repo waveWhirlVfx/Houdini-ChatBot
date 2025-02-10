@@ -1,6 +1,9 @@
 # Houdini AI Assistant ChatBot
 
 A powerful AI-powered chat interface for Houdini that helps users generate and execute Python and VEX code. This tool integrates with Ollama to provide intelligent code generation and automation capabilities within Houdini.
+![Screenshot 2025-02-09 021532](https://github.com/user-attachments/assets/e2382ea6-de81-47f2-b672-781e52793eb6)
+
+
 
 ## Features
 
