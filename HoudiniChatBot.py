@@ -23,105 +23,71 @@ import shutil
 from typing import Tuple
 
 def check_windows_ollama() -> Tuple[bool, str]:
-    """
-    Check if Ollama is installed on Windows.
-    Returns: Tuple of (is_installed: bool, message: str)
-    """
-    # First check if ollama is in PATH
     if shutil.which('ollama') is not None:
         return True, "Ollama is installed and available in PATH"
-    
-    # Common installation locations
     paths_to_check = [
         os.path.expandvars(r'%ProgramFiles%\Ollama\ollama.exe'),
         os.path.expandvars(r'%ProgramFiles(x86)%\Ollama\ollama.exe'),
         os.path.expandvars(r'%LocalAppData%\Programs\Ollama\ollama.exe')
     ]
-    
-    # Check Windows Registry
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Ollama') as key:
             install_path = winreg.QueryValueEx(key, 'InstallLocation')[0]
             return True, f"Ollama found in registry at: {install_path}"
     except ImportError:
-        print("Warning: Unable to check registry (winreg import failed)")
+        pass
     except WindowsError:
         pass
-    
-    # Check binary locations
     for path in paths_to_check:
         if os.path.exists(path):
             return True, f"Ollama found at: {path}"
-    
     return False, "Ollama not found on the system"
 
 def get_ollama_version() -> str:
-    """
-    Get Ollama version if available.
-    Returns: Version string or error message
-    """
     try:
-        result = subprocess.run(['ollama', 'version'], 
-                              capture_output=True, 
-                              text=True, 
-                              timeout=5)
+        result = subprocess.run(['ollama', 'version'], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             return result.stdout.strip()
         return "Could not determine version"
-    except (subprocess.CalledProcessError, subprocess.TimeoutError):
+    except:
         return "Could not determine version"
-    except FileNotFoundError:
-        return "Ollama command not found"
 
 def main():
-    """Main function to run the Ollama installation check"""
     print("Checking Ollama Installation on Windows...")
     print("-" * 40)
-    
     is_installed, message = check_windows_ollama()
-    
     print(f"Installation Status: {'Installed' if is_installed else 'Not Installed'}")
     print(f"Details: {message}")
-    
     if is_installed:
         version = get_ollama_version()
         print(f"Version: {version}")
-        
-        
-        
-# Try importing voice libraries.
+
 try:
     import speech_recognition as sr
 except ImportError:
     sr = None
-
 try:
     import pyttsx3
 except ImportError:
     pyttsx3 = None
 
-# --- Automatic API URL/Port Check Functions ---
 def is_port_open(port, host="localhost", timeout=0.5):
-    """Return True if the given port is open on the host."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(timeout)
     try:
         s.connect((host, port))
         s.close()
         return True
-    except Exception:
+    except:
         return False
 
 def find_api_url(default_path="/api/generate", candidate_ports=[11434, 11435, 11433, 5000, 8000]):
-    """Return a full API URL for the first open candidate port on localhost.
-       If none are found, returns None."""
     for port in candidate_ports:
         if is_port_open(port):
             return f"http://localhost:{port}{default_path}"
     return None
 
-# Updated SVG icon definitions with better proportions and consistent styling
 SVG_CLEAR = """
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
     <g fill="#ffffff">
@@ -207,9 +173,6 @@ SVG_EDIT = """
 """
 
 def create_svg_icon(svg_data, size):
-    """
-    Create a QIcon from an SVG string.
-    """
     svg_bytes = svg_data.encode('utf-8')
     renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg_bytes))
     pixmap = QtGui.QPixmap(size, size)
@@ -219,11 +182,10 @@ def create_svg_icon(svg_data, size):
     painter.end()
     return QtGui.QIcon(pixmap)
 
-# --- End Embedded Icons ---
-
 class WorkerSignals(QtCore.QObject):
     finished = QtCore.Signal(str, bool, str)
     error = QtCore.Signal(str)
+    partial = QtCore.Signal(str)
 
 class AIWorker(QtCore.QRunnable):
     def __init__(self, user_message, api_url, model_name):
@@ -240,45 +202,58 @@ class AIWorker(QtCore.QRunnable):
     def run(self):
         try:
             houdini_context = (
-                "You are a Houdini automation assistant chat bot. You are an expert in Houdini, Python, and VEX. "
-                "Your task is to generate only the Houdini code (either Python or VEX) that the user requests, with no extra commentary or explanations. "
-                "If the request is for Python, output a brief message indicating that the code follows, then provide the complete, correct, and executable Houdini Python code enclosed between ```python and ```.\n"
-                "If the request is for VEX, output a brief message indicating that the code follows, then provide the complete, correct VEX code enclosed between ```vex and ```."
+                "You are a Houdini automation assistant chat bot. "
+                "If the user request is related to Houdini, Python, or VEX, provide the complete and precise, correct and executable code accordingly, enclosed within the appropriate code fences.Answer only what is asked, precisely and concisely, without extra details.  "
+                "If the user request is not related to Houdini (for example, casual greetings or general questions), respond conversationally without any code, but still provide a helpful answer."
             )
             full_prompt = houdini_context + "\nUser request:\n" + self.user_message
             data = {
                 "model": self.model_name,
                 "prompt": full_prompt,
-                "stream": False
+                "stream": True
             }
-            response = requests.post(self.api_url, json=data)
-            if self._cancelled:
-                self.signals.error.emit("Request cancelled by user.")
-                return
-            if response.status_code != 200:
-                error_msg = f"Bad response: {response.status_code}"
-                try:
-                    error_msg += f" - {response.json()}"
-                except Exception:
-                    error_msg += f" - {response.text}"
-                raise Exception(error_msg)
-            ai_response = response.json().get('response', '')
-            if not ai_response:
+            with requests.post(self.api_url, json=data, stream=True) as r:
+                if r.status_code != 200:
+                    error_msg = f"Bad response: {r.status_code}"
+                    try:
+                        error_msg += f" - {r.json()}"
+                    except:
+                        error_msg += f" - {r.text}"
+                    raise Exception(error_msg)
+    
+                partial_text = ""
+                for line in r.iter_lines(decode_unicode=True):
+                    if self._cancelled:
+                        self.signals.error.emit("Request cancelled by user.")
+                        return
+                    if line:
+                        try:
+                            chunk = json.loads(line)
+                            token = chunk.get('response', '')
+                            partial_text += token
+                            self.signals.partial.emit(partial_text)
+                        except:
+                            pass
+    
+            if not partial_text.strip():
                 raise Exception("Empty response from API")
-            code_match = re.search(r'```python(.*?)```', ai_response, re.DOTALL)
+    
+            code_match = re.search(r'```python(.*?)```', partial_text, re.DOTALL)
             if code_match:
                 extracted_code = code_match.group(1).strip()
             else:
-                vex_match = re.search(r'```vex(.*?)```', ai_response, re.DOTALL)
+                vex_match = re.search(r'```vex(.*?)```', partial_text, re.DOTALL)
                 if vex_match:
                     extracted_code = vex_match.group(1).strip()
                 else:
                     extracted_code = ""
+    
             if extracted_code:
                 hou.session.ai_execution_code = extracted_code
-                self.signals.finished.emit(ai_response, True, extracted_code)
+                self.signals.finished.emit(partial_text, True, extracted_code)
             else:
-                self.signals.finished.emit(ai_response, False, "")
+                self.signals.finished.emit(partial_text, False, "")
+    
         except requests.exceptions.Timeout:
             self.signals.error.emit("Request timed out.")
         except requests.exceptions.ConnectionError:
@@ -286,6 +261,7 @@ class AIWorker(QtCore.QRunnable):
         except Exception as e:
             error_msg = f"Model request error: {str(e)}\nAPI URL: {self.api_url}\nModel: {self.model_name}"
             self.signals.error.emit(error_msg)
+
 
 class PythonHighlighter(QtGui.QSyntaxHighlighter):
     def __init__(self, document):
@@ -372,32 +348,22 @@ class SettingsDialog(QtWidgets.QDialog):
                 padding: 0 3px;
             }
         """)
-        
         layout = QtWidgets.QVBoxLayout(self)
-        
-        # API Settings Group
         api_group = QtWidgets.QGroupBox("API Settings")
         api_layout = QtWidgets.QFormLayout(api_group)
-        
         self.api_url_edit = QtWidgets.QLineEdit(api_url)
         self.model_name_edit = QtWidgets.QLineEdit(model_name)
         api_layout.addRow("API URL:", self.api_url_edit)
         api_layout.addRow("Model Name:", self.model_name_edit)
         layout.addWidget(api_group)
-        
-        # History Settings Group
         history_group = QtWidgets.QGroupBox("Chat History Settings")
         history_layout = QtWidgets.QVBoxLayout(history_group)
-        
-        # Storage Type Selection
         self.storage_type = QtWidgets.QComboBox()
         self.storage_type.addItems(["Session Storage", "Disk Storage"])
         self.storage_type.setCurrentIndex(1 if use_disk_storage else 0)
         self.storage_type.currentIndexChanged.connect(self.toggle_path_widgets)
         history_layout.addWidget(QtWidgets.QLabel("Storage Type:"))
         history_layout.addWidget(self.storage_type)
-        
-        # Path Selection Widgets
         path_widget = QtWidgets.QWidget()
         path_layout = QtWidgets.QHBoxLayout(path_widget)
         self.path_edit = QtWidgets.QLineEdit(history_path)
@@ -408,46 +374,31 @@ class SettingsDialog(QtWidgets.QDialog):
         path_layout.addWidget(self.browse_button)
         history_layout.addWidget(QtWidgets.QLabel("Storage Path:"))
         history_layout.addWidget(path_widget)
-        
         layout.addWidget(history_group)
-        
-        # Toggle path widgets based on initial selection
         self.toggle_path_widgets(self.storage_type.currentIndex())
-        
         layout.addStretch(1)
-        button_box = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
-        )
+        button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         button_box.button(QtWidgets.QDialogButtonBox.Ok).setText("Save")
         layout.addWidget(button_box)
-        
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
-    
+
     def toggle_path_widgets(self, index):
-        """Enable/disable path selection widgets based on storage type."""
         use_disk = index == 1
         self.path_edit.setEnabled(use_disk)
         self.browse_button.setEnabled(use_disk)
-    
+
     def browse_path(self):
-        """Open file dialog to select history storage path."""
-        path = QtWidgets.QFileDialog.getExistingDirectory(
-            self,
-            "Select Directory for Chat History",
-            self.path_edit.text(),
-            QtWidgets.QFileDialog.ShowDirsOnly
-        )
+        path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Directory for Chat History", self.path_edit.text(), QtWidgets.QFileDialog.ShowDirsOnly)
         if path:
             self.path_edit.setText(path)
-    
+
     def get_settings(self):
-        """Return tuple of all settings."""
         return (
             self.api_url_edit.text().strip(),
             self.model_name_edit.text().strip(),
             self.path_edit.text().strip(),
-            self.storage_type.currentIndex() == 1  # True if Disk Storage
+            self.storage_type.currentIndex() == 1
         )
 
 class ChatbotPanel(QtWidgets.QWidget):
@@ -457,28 +408,21 @@ class ChatbotPanel(QtWidgets.QWidget):
         found_url = find_api_url(candidate_ports=[11434, 11435, 11433, 5000, 8000])
         self.api_url = found_url if found_url else "http://localhost:11434/api/generate"
         self.model_name = "qwen2.5-coder:32b"
-        # Add new persistence settings
         self.history_path = ""
         self.use_disk_storage = False
         self.load_settings()
-        
-        # Load chat history based on storage type
         self.load_chat_history()
-        
         self.current_conversation = []
         if hasattr(hou.session, "ai_chat_history"):
             self.conversations = hou.session.ai_chat_history
         else:
             self.conversations = []
-        self.current_conversation = []
-        self.thinking_timer = None
         self.thinking_label = None
+        self.thinking_timer = None
         self.thinking_state = 0
         self.current_worker = None
         self.request_in_progress = False
         self.cancel_requested = False
-
-        # Cache icons
         self.icon_clear = create_svg_icon(SVG_CLEAR, 24)
         self.icon_export = create_svg_icon(SVG_EXPORT, 24)
         self.icon_settings = create_svg_icon(SVG_SETTINGS, 24)
@@ -488,7 +432,6 @@ class ChatbotPanel(QtWidgets.QWidget):
         self.icon_mic_active = create_svg_icon(SVG_MIC_ACTIVE, 24)
         self.icon_copy = create_svg_icon(SVG_COPY, 16)
         self.icon_edit = create_svg_icon(SVG_EDIT, 16)
-
         self.init_ui()
         self.apply_modern_styles()
 
@@ -496,8 +439,6 @@ class ChatbotPanel(QtWidgets.QWidget):
         main_hlayout = QtWidgets.QHBoxLayout(self)
         main_hlayout.setContentsMargins(0,0,0,0)
         main_hlayout.setSpacing(0)
-
-        # Sidebar
         sidebar_widget = QtWidgets.QWidget()
         sidebar_layout = QtWidgets.QVBoxLayout(sidebar_widget)
         sidebar_layout.setContentsMargins(10,10,10,10)
@@ -513,8 +454,8 @@ class ChatbotPanel(QtWidgets.QWidget):
         for conv in self.conversations:
             self.sidebar.addItem(conv["title"])
 
-        # Main Chat Area
         chat_area_widget = QtWidgets.QWidget()
+        chat_area_widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         chat_area_layout = QtWidgets.QVBoxLayout(chat_area_widget)
         chat_area_layout.setContentsMargins(20,20,20,20)
         chat_area_layout.setSpacing(15)
@@ -523,25 +464,18 @@ class ChatbotPanel(QtWidgets.QWidget):
         header_layout.setContentsMargins(0,0,0,0)
         title_label = QtWidgets.QLabel("Houdini AI Assistant")
         title_label.setObjectName("titleLabel")
-        
-        # Run Ollama check
         is_installed, _ = check_windows_ollama()
-        status_color = "#00ff00" if is_installed else "#ff0000"  # Green if installed, Red if not
-        
-        # Create a status indicator (green or red sphere)
+        status_color = "#00ff00" if is_installed else "#ff0000"
         status_icon = QtWidgets.QLabel()
-        status_icon.setFixedSize(12, 12)  
-        status_icon.setStyleSheet(f"border-radius: 6px; background-color: {status_color};")  
-        
-        # Layout for title + status indicator
+        status_icon.setFixedSize(12, 12)
+        status_icon.setStyleSheet(f"border-radius: 6px; background-color: {status_color};")
         title_container = QtWidgets.QWidget()
-        title_layout = QtWidgets.QHBoxLayout(title_container)
-        title_layout.setContentsMargins(0, 0, 0, 0)
-        title_layout.setSpacing(8)
-        title_layout.addWidget(title_label)
-        title_layout.addWidget(status_icon)
-        
-        header_layout.addWidget(title_container)  # Add the full title block to the header
+        title_layout2 = QtWidgets.QHBoxLayout(title_container)
+        title_layout2.setContentsMargins(0, 0, 0, 0)
+        title_layout2.setSpacing(8)
+        title_layout2.addWidget(title_label)
+        title_layout2.addWidget(status_icon)
+        header_layout.addWidget(title_container)
         header_layout.addStretch()
         self.clear_button = QtWidgets.QPushButton()
         self.clear_button.setIcon(self.icon_clear)
@@ -564,21 +498,25 @@ class ChatbotPanel(QtWidgets.QWidget):
         chat_area_layout.addWidget(header_widget)
 
         self.chat_container = QtWidgets.QWidget()
+        self.chat_container.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         self.chat_layout = QtWidgets.QVBoxLayout(self.chat_container)
         self.chat_layout.setContentsMargins(0,0,0,0)
         self.chat_layout.setSpacing(10)
         self.chat_layout.addStretch()
+
         self.scroll_area = QtWidgets.QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setWidget(self.chat_container)
+        self.scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         chat_area_layout.addWidget(self.scroll_area, 1)
+
         self.error_display = QtWidgets.QLabel("")
         self.error_display.setStyleSheet("color: #e0e0e0; font-size: 11px; padding: 2px;")
         self.error_display.setAlignment(QtCore.Qt.AlignLeft)
         self.error_display.setWordWrap(True)
         chat_area_layout.addWidget(self.error_display)
 
-        # Input area with text, Send, Mic, Cancel buttons.
         input_container = QtWidgets.QWidget()
         input_layout = QtWidgets.QHBoxLayout(input_container)
         input_layout.setSpacing(8)
@@ -587,23 +525,27 @@ class ChatbotPanel(QtWidgets.QWidget):
         self.input_field.setMaximumHeight(36)
         self.input_field.setObjectName("inputField")
         input_layout.addWidget(self.input_field)
+
         self.send_button = QtWidgets.QPushButton()
         self.send_button.setIcon(self.icon_send)
         self.send_button.setToolTip("Send Message")
         self.send_button.setIconSize(QtCore.QSize(24,24))
         self.send_button.clicked.connect(self.send_message)
         input_layout.addWidget(self.send_button)
+
         self.mic_button = QtWidgets.QPushButton()
         self.mic_button.setIcon(self.icon_mic_default)
         self.mic_button.setToolTip("Voice Input")
         self.mic_button.setIconSize(QtCore.QSize(24,24))
         self.mic_button.clicked.connect(self.voice_input)
         input_layout.addWidget(self.mic_button)
+
         self.cancel_button = QtWidgets.QPushButton("Cancel")
         self.cancel_button.setToolTip("Cancel Request")
         self.cancel_button.clicked.connect(self.cancel_request)
         self.cancel_button.hide()
         input_layout.addWidget(self.cancel_button)
+
         chat_area_layout.addWidget(input_container)
         main_hlayout.addWidget(sidebar_widget,0)
         main_hlayout.addWidget(chat_area_widget,1)
@@ -633,22 +575,23 @@ class ChatbotPanel(QtWidgets.QWidget):
                 color: #e0e0e0;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
             }
-            #titleLabel { font-size: 18px; font-weight: 500; color: #ffffff; }
+            #titleLabel {
+                font-size: 18px;
+                font-weight: 500;
+                color: #ffffff;
+            }
             QLabel.message {
                 border: 1px solid #404040;
-                border-radius: 4px;
-                padding: 8px 12px;
+                border-radius: 8px;
+                padding: 15px;
                 font-size: 13px;
                 line-height: 1.4;
-            }
-            QLabel.user {
                 background-color: #2d2d2d;
-                max-width: 80%;
-                margin-left: auto;
+                word-wrap: break-word;
+                max-width: 700px;
             }
-            QLabel.assistant {
-                background-color: #2d2d2d;
-                margin-right: auto;
+            QLabel.user, QLabel.assistant {
+                margin: 0;
             }
             QPlainTextEdit.codeBlock {
                 background-color: #1E1E1E;
@@ -694,7 +637,16 @@ class ChatbotPanel(QtWidgets.QWidget):
             QListWidget::item:selected {
                 background-color: #404040;
             }
+            QScrollArea {
+                border: none;
+            }
         """)
+
+
+
+
+
+
 
     def add_message(self, widget):
         container = QtWidgets.QWidget()
@@ -719,6 +671,7 @@ class ChatbotPanel(QtWidgets.QWidget):
         container = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(container)
         layout.setContentsMargins(10,5,10,5)
+
         code_widget = QtWidgets.QPlainTextEdit()
         code_widget.setReadOnly(False)
         code_widget.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse | QtCore.Qt.TextSelectableByKeyboard)
@@ -728,31 +681,30 @@ class ChatbotPanel(QtWidgets.QWidget):
         PythonHighlighter(code_widget.document())
         layout.addWidget(code_widget)
 
-        # Button container for Run, Copy, and Edit
         buttons_container = QtWidgets.QWidget()
         buttons_layout = QtWidgets.QHBoxLayout(buttons_container)
         buttons_layout.setContentsMargins(0,0,0,0)
         buttons_layout.setSpacing(10)
-        
+
         run_button = QtWidgets.QPushButton()
         run_button.setIcon(self.icon_run)
         run_button.setToolTip("Execute Code")
         run_button.setIconSize(QtCore.QSize(24,24))
         run_button.clicked.connect(lambda: self.execute_code(code_widget))
         buttons_layout.addWidget(run_button)
-        
+
         copy_button = QtWidgets.QPushButton("Copy")
         copy_button.setIcon(self.icon_copy)
         copy_button.setToolTip("Copy Code")
         copy_button.clicked.connect(lambda: self.copy_code(code_widget, copy_button))
         buttons_layout.addWidget(copy_button)
-        
+
         edit_button = QtWidgets.QPushButton("Edit")
         edit_button.setIcon(self.icon_edit)
         edit_button.setToolTip("Toggle Editable Code")
         edit_button.clicked.connect(lambda: self.toggle_edit_code(code_widget, edit_button))
         buttons_layout.addWidget(edit_button)
-        
+
         layout.addWidget(buttons_container)
         self.chat_layout.insertWidget(self.chat_layout.count()-1, container)
         QtCore.QTimer.singleShot(100, lambda: self.scroll_area.verticalScrollBar().setValue(
@@ -777,54 +729,43 @@ class ChatbotPanel(QtWidgets.QWidget):
         cursor = code_widget.textCursor()
         selected_text = cursor.selectedText()
         code_to_run = selected_text if selected_text.strip() else code_widget.toPlainText()
-        
-        # Check if this is VEX code by looking for typical VEX functions/keywords
-        vex_indicators = ['@', 'v@', 'f@', 'i@', 'p@', 'point()', 'prim()', 'vertex()', 'detail()', 'volumesample()', 'chramp()', 'primintrinsic()']
+
+        vex_indicators = [
+            '@', 'v@', 'f@', 'i@', 'p@',
+            'point()', 'prim()', 'vertex()', 'detail()',
+            'volumesample()', 'chramp()', 'primintrinsic()'
+        ]
         is_vex = any(indicator in code_to_run for indicator in vex_indicators)
-        
+
         try:
             if is_vex:
-                # Get the current node selection
                 selected_nodes = hou.selectedNodes()
                 parent_node = None
-                
-                # Determine where to create the wrangle node
                 if selected_nodes:
                     parent_node = selected_nodes[0].parent()
                     insert_position = selected_nodes[0].position()
-                    # Offset slightly to avoid overlap
                     insert_position = hou.Vector2(insert_position[0] + 1, insert_position[1] - 1)
                 else:
-                    # If no selection, use the current network editor pane's location
                     editor = [pane for pane in hou.ui.paneTabs() if isinstance(pane, hou.NetworkEditor)]
                     if editor:
                         parent_node = editor[0].pwd()
                         insert_position = editor[0].cursorPosition()
                     else:
-                        # Fallback to /obj if no editor is found
                         parent_node = hou.node("/obj")
                         insert_position = hou.Vector2(0, 0)
-                
+
                 if parent_node:
-                    # Create the attribute wrangle node
                     wrangle = parent_node.createNode("attribwrangle")
                     wrangle.setPosition(insert_position)
-                    
-                    # Set the VEX code
                     wrangle.parm("snippet").set(code_to_run)
-                    
-                    # Select the new node
                     wrangle.setSelected(True)
-                    
-                    # Set display message
                     self.error_display.setText("Created attribute wrangle node with VEX code")
                 else:
                     raise Exception("Could not determine where to create the wrangle node")
             else:
-                # Execute Python code as before
                 exec(code_to_run, {'hou': hou})
                 self.error_display.setText("Python code executed successfully")
-                
+
         except Exception as e:
             self.error_display.setText(f"Execution error: {e}")
 
@@ -891,27 +832,50 @@ class ChatbotPanel(QtWidgets.QWidget):
         message = self.input_field.toPlainText().strip()
         if not message:
             return
+    
         timestamp = QtCore.QDateTime.currentDateTime().toString("hh:mm")
         user_label = QtWidgets.QLabel(f"{message}   <span style='font-size:11px; color:#666666;'>{timestamp}</span>")
         user_label.setObjectName("userMessage")
         user_label.setProperty("class", "message user")
         user_label.setTextFormat(QtCore.Qt.RichText)
         user_label.setWordWrap(True)
-        user_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse | QtCore.Qt.TextSelectableByKeyboard)
-
         self.add_message(user_label)
+    
         self.current_conversation.append({"role": "user", "message": message})
         self.input_field.clear()
-        self.start_thinking()
+    
+        self.start_thinking()  # show "thinking" immediately
+    
         self.send_button.setEnabled(False)
         self.cancel_button.show()
         self.request_in_progress = True
         self.cancel_requested = False
+    
         worker = AIWorker(message, self.api_url, self.model_name)
-        self.current_worker = worker
+        worker.signals.partial.connect(self.handle_partial_response)
         worker.signals.finished.connect(self.handle_ai_response)
         worker.signals.error.connect(self.handle_error)
+        self.current_worker = worker
         self.thread_pool.start(worker)
+
+    def handle_partial_response(self, partial_text):
+        if self.cancel_requested:
+            return
+    
+        # As soon as AI starts sending any text, stop thinking
+        if self.thinking_label:
+            self.stop_thinking()
+    
+        # Display partial text in a dedicated label
+        if not hasattr(self, 'partial_label') or self.partial_label is None:
+            self.partial_label = QtWidgets.QLabel()
+            self.partial_label.setProperty("class", "message assistant")
+            self.partial_label.setTextFormat(QtCore.Qt.RichText)
+            self.partial_label.setWordWrap(True)
+            self.add_message(self.partial_label)
+    
+        self.partial_label.setText(partial_text)
+
 
     def cancel_request(self):
         if self.request_in_progress and self.current_worker:
@@ -924,104 +888,29 @@ class ChatbotPanel(QtWidgets.QWidget):
     def handle_ai_response(self, ai_response, code_found, python_code):
         if self.cancel_requested:
             return
+    
         self.stop_thinking()
-        timestamp = QtCore.QDateTime.currentDateTime().toString("hh:mm")
-        
-        # Check if this is VEX code
+        if hasattr(self, 'partial_label') and self.partial_label:
+            self.partial_label.setText(ai_response)
+            self.partial_label = None
+    
         vex_match = re.search(r'```vex(.*?)```', ai_response, re.DOTALL)
         if vex_match:
             code_found = True
             python_code = vex_match.group(1).strip()
-        
-        container = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(container)
-        layout.setContentsMargins(10, 5, 10, 5)
-        
-        message_container = QtWidgets.QWidget()
-        message_layout = QtWidgets.QVBoxLayout(message_container)
-        message_layout.setContentsMargins(0, 0, 0, 0)
-        
-        assistant_label = QtWidgets.QLabel()
-        assistant_label.setProperty("class", "message assistant")
-        assistant_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse | QtCore.Qt.TextSelectableByKeyboard)
-        message_layout.addWidget(assistant_label)        
-        
-        # Create button container
-        button_container = QtWidgets.QWidget()
-        button_layout = QtWidgets.QHBoxLayout(button_container)
-        button_layout.setContentsMargins(0, 5, 0, 0)
-        button_layout.setAlignment(QtCore.Qt.AlignLeft)
-        
-        if pyttsx3 is not None:
-            speak_button = QtWidgets.QPushButton("Speak")
-            speak_button.setToolTip("Speak Response")
-            speak_button.setStyleSheet("""
-                QPushButton {
-                    background-color: #404040;
-                    border: none;
-                    padding: 5px 10px;
-                    border-radius: 3px;
-                    color: #e0e0e0;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    background-color: #505050;
-                }
-            """)
-            
-            # Create a function to handle text-to-speech
-            def speak_text():
-                # Strip HTML tags and timestamps from the response
-                clean_text = re.sub(r'<[^>]+>', '', ai_response)
-                clean_text = re.sub(r'\s*\d{2}:\d{2}\s*$', '', clean_text)
-                
-                try:
-                    speak_button.setEnabled(False)
-                    speak_button.setText("Speaking...")
-                    
-                    engine = pyttsx3.init()
-                    engine.say(clean_text)
-                    engine.runAndWait()
-                    
-                    speak_button.setText("Speak")
-                    speak_button.setEnabled(True)
-                except Exception as e:
-                    self.error_display.setText(f"Text-to-speech error: {str(e)}")
-                    speak_button.setText("Speak")
-                    speak_button.setEnabled(True)
-            
-            speak_button.clicked.connect(speak_text)
-            button_layout.addWidget(speak_button)
-        
-        message_layout.addWidget(button_container)
-        layout.addWidget(message_container)
-        layout.addStretch()
-        
-        self.chat_layout.insertWidget(self.chat_layout.count()-1, container)
-        
-        # Type out the response
-        full_text = ai_response
-        current_text = ""
-        typing_timer = QtCore.QTimer()
-        
-        def update_text():
-            nonlocal current_text
-            if len(current_text) < len(full_text):
-                current_text += full_text[len(current_text)]
-                assistant_label.setText(f"{current_text}   <span style='font-size:11px; color:#909090;'>{timestamp}</span>")
-            else:
-                typing_timer.stop()
-                entry = {"role": "assistant", "message": ai_response}
-                if code_found and python_code:
-                    entry["code"] = python_code
-                    entry["is_vex"] = bool(vex_match)
-                self.current_conversation.append(entry)
-                if code_found and python_code:
-                    self.add_code_block(python_code)
-                self.cleanup_after_request()
-        
-        typing_timer.timeout.connect(update_text)
-        typing_timer.start(30)
+    
+        entry = {"role": "assistant", "message": ai_response}
+        if code_found and python_code:
+            entry["code"] = python_code
+            entry["is_vex"] = bool(vex_match)
+    
+        self.current_conversation.append(entry)
+    
+        if code_found and python_code:
+            self.add_code_block(python_code)
+    
+        self.cleanup_after_request()
+
 
     def handle_error(self, error_message):
         if self.cancel_requested:
@@ -1056,6 +945,7 @@ class ChatbotPanel(QtWidgets.QWidget):
         conversation = self.conversations[index]["messages"]
         self.clear_chat()
         self.current_conversation = conversation.copy()
+
         for entry in conversation:
             timestamp = ""
             if entry.get("role") == "user":
@@ -1072,7 +962,7 @@ class ChatbotPanel(QtWidgets.QWidget):
                 self.add_message(label)
                 if entry.get("code", ""):
                     self.add_code_block(entry.get("code"))
-                    
+
     def keyPressEvent(self, event):
         if (event.key() in [QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter]) and not (event.modifiers() & QtCore.Qt.ShiftModifier):
             if self.input_field.hasFocus():
@@ -1082,7 +972,6 @@ class ChatbotPanel(QtWidgets.QWidget):
         super().keyPressEvent(event)
 
     def load_settings(self):
-        """Load settings from disk if they exist."""
         settings_path = os.path.join(os.path.expanduser("~"), ".houdini_ai_settings.json")
         if os.path.exists(settings_path):
             try:
@@ -1092,11 +981,10 @@ class ChatbotPanel(QtWidgets.QWidget):
                     self.model_name = settings.get('model_name', self.model_name)
                     self.history_path = settings.get('history_path', '')
                     self.use_disk_storage = settings.get('use_disk_storage', False)
-            except Exception as e:
-                print(f"Error loading settings: {e}")
+            except:
+                pass
 
     def save_settings(self):
-        """Save current settings to disk."""
         settings_path = os.path.join(os.path.expanduser("~"), ".houdini_ai_settings.json")
         try:
             settings = {
@@ -1107,11 +995,10 @@ class ChatbotPanel(QtWidgets.QWidget):
             }
             with open(settings_path, 'w') as f:
                 json.dump(settings, f)
-        except Exception as e:
-            print(f"Error saving settings: {e}")
+        except:
+            pass
 
     def load_chat_history(self):
-        """Load chat history based on storage type."""
         if self.use_disk_storage and self.history_path:
             history_file = os.path.join(self.history_path, "houdini_ai_chat_history.json")
             try:
@@ -1120,18 +1007,15 @@ class ChatbotPanel(QtWidgets.QWidget):
                         self.conversations = json.load(f)
                 else:
                     self.conversations = []
-            except Exception as e:
-                print(f"Error loading chat history: {e}")
+            except:
                 self.conversations = []
         else:
-            # Use session storage
             if hasattr(hou.session, "ai_chat_history"):
                 self.conversations = hou.session.ai_chat_history
             else:
                 self.conversations = []
 
     def save_chat_history(self):
-        """Save chat history based on storage type."""
         if self.use_disk_storage and self.history_path:
             try:
                 if not os.path.exists(self.history_path):
@@ -1139,26 +1023,17 @@ class ChatbotPanel(QtWidgets.QWidget):
                 history_file = os.path.join(self.history_path, "houdini_ai_chat_history.json")
                 with open(history_file, 'w') as f:
                     json.dump(self.conversations, f)
-            except Exception as e:
-                print(f"Error saving chat history: {e}")
+            except:
+                pass
         else:
-            # Use session storage
             hou.session.ai_chat_history = self.conversations
 
     def open_settings(self):
-        dialog = SettingsDialog(
-            self, 
-            self.api_url, 
-            self.model_name,
-            self.history_path,
-            self.use_disk_storage
-        )
+        dialog = SettingsDialog(self, self.api_url, self.model_name, self.history_path, self.use_disk_storage)
         if dialog.exec_():
             self.api_url, self.model_name, self.history_path, self.use_disk_storage = dialog.get_settings()
             self.save_settings()
-            # Reload chat history with new settings
             self.load_chat_history()
-            # Refresh sidebar
             self.sidebar.clear()
             for conv in self.conversations:
                 self.sidebar.addItem(conv["title"])
